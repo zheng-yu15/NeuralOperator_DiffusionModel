@@ -69,21 +69,35 @@ def preprocess(x,y, Par):
     print()
     return x,y
 
-res = 128
+unet_dir = (
+    r"E:\AI_Project\NeuralOperator_DiffusionModel"
+    r"\case_1_kolmogorov\no_dm\unet"
+)
 begin_time = time.time()
-# inp = np.load(f"/oscar/data/gk/voommen/no_diffusion/kolmogrov/res_{res}/matcho/Y_PRED.npy") #low-fidelity
-# out = np.load(f"/oscar/data/gk/voommen/no_diffusion/kolmogrov/res_{res}/matcho/Y_TRUE.npy") #high-fidelity
-x_train = np.load("../TRAIN_PRED.npy")
-y_train = np.load("../TRAIN_TRUE.npy")
+x_train = np.load(os.path.join(unet_dir, "TRAIN_PRED.npy"))
+y_train = np.load(os.path.join(unet_dir, "TRAIN_TRUE.npy"))
 
-x_val = np.load("../VAL_PRED.npy")
-y_val = np.load("../VAL_TRUE.npy")
+x_val = np.load(os.path.join(unet_dir, "VAL_PRED.npy"))
+y_val = np.load(os.path.join(unet_dir, "VAL_TRUE.npy"))
 
-x_test = np.load("../TEST_PRED.npy")
-y_test = np.load("../TEST_TRUE.npy")
+x_test = np.load(os.path.join(unet_dir, "TEST_PRED.npy"))
+y_test = np.load(os.path.join(unet_dir, "TEST_TRUE.npy"))
 print(f"Data Loading Time: {time.time() - begin_time:.1f}s")
 
+# 快速验证：只取50帧
+val_num = min(50, len(x_val))
+val_indices = np.linspace(0, len(x_val) - 1, val_num, dtype=int)
+x_val = x_val[val_indices]
+y_val = y_val[val_indices]
 
+# 快速测试：也只取50帧
+test_num = min(50, len(x_test))
+test_indices = np.linspace(0, len(x_test) - 1, test_num, dtype=int)
+x_test = x_test[test_indices]
+y_test = y_test[test_indices]
+
+print("Validation:", x_val.shape, y_val.shape)
+print("Test:", x_test.shape, y_test.shape)
 
 # Train-Val-Test Split
 # idx1 = int(0.8 * inp.shape[0])
@@ -115,7 +129,7 @@ Par = {"inp_shift" : torch.tensor(inp_min, dtype=DTYPE, device=device),
        "nf"        : 1,
        "lb"        : 1,
        "lf"        : 1,
-       "num_epochs": 1000
+       "num_epochs": 10
        }
 
 # Normalizing the data to [0,1]
@@ -148,7 +162,12 @@ Par.update({"channels"       : x_train.shape[1],
             })
 
 print("Par")
-with open('Par.pkl', 'wb') as f:
+script_dir = os.path.dirname(os.path.abspath(__file__))
+model_dir = os.path.join(script_dir, "models_reduced")
+os.makedirs(model_dir, exist_ok=True)
+
+best_model_path = os.path.join(model_dir, "best_model.pt")
+with open(os.path.join(script_dir, "Par_reduced.pkl"), "wb") as f:
     pickle.dump(Par, f)
 
 x_train_tensor = torch.tensor(x_train, dtype=torch.float32)
@@ -165,9 +184,9 @@ val_dataset = MyDataset(x_val_tensor, y_val_tensor)
 test_dataset = MyDataset(x_test_tensor, y_test_tensor)
 
 # Define data loaders
-train_batch_size = 100 #16
-val_batch_size   = 100
-test_batch_size  = 100
+train_batch_size = 4 #16
+val_batch_size   = 1
+test_batch_size  = 1
 train_loader = DataLoader(train_dataset, batch_size=train_batch_size, shuffle=True)
 val_loader = DataLoader(val_dataset, batch_size=val_batch_size)
 test_loader = DataLoader(test_dataset, batch_size=test_batch_size)
@@ -178,15 +197,17 @@ net = Unet(
     dim_mults = (1, 2, 4, 8),
     channels = Par["channels"],
     self_condition = Par["self_condition"],
-    flash_attn = True
+    flash_attn = False
 ).to(device).to(torch.float32)
 summary(net, input_size=((1,)+x_train.shape[1:], (1,)) )
 
-model = ElucidatedDiffusion(net,
-                                channels = Par["channels"],
-                                image_size_h=Par["nx"],
-                                image_size_w=Par["ny"],
-                                sigma_data=Par["sigma_data"])
+model = ElucidatedDiffusion(
+    net,
+    channels=Par["channels"],
+    image_size_h=Par["nx"],
+    image_size_w=Par["ny"],
+    sigma_data=Par["sigma_data"]
+).to(device)
 
 # Adjust the dimensions as per your model's input size
 dummy_x = torch.tensor(torch.randn(1, Par["channels"], Par["nx"], Par["ny"]),   dtype=DTYPE, device=device)
@@ -206,7 +227,7 @@ num_epochs = Par['num_epochs']
 best_val_loss = float('inf')
 best_model_id = 0
 
-os.makedirs('models', exist_ok=True)
+
 t0 = time.time()
 for epoch in range(num_epochs):
     begin_time = time.time()
@@ -218,19 +239,24 @@ for epoch in range(num_epochs):
         optimizer.zero_grad()
         with autocast():
             loss = model(h_fidel.to(device), l_fidel.to(device))
+#随机生成噪声强度 sigma；
+#给真实流场 h_fidel 加入高斯噪声；
+#将带噪流场、sigma和NO预测 l_fidel输入DM内部U-Net；
+#让网络估计干净流场；
+#计算去噪训练损失。
         scaler.scale(loss).backward()
         scaler.step(optimizer)
         scaler.update()
         train_loss += loss.item()
 
         # Update learning rate
-        # scheduler.step()
+        scheduler.step()
 
     train_loss /= len(train_loader)
     train_time = time.time()-train_time
 
     # Validation
-    if epoch !=0 and epoch % 10 == 0:
+    if (epoch + 1) % 5 == 0:
         val_time = time.time()
         model.eval()
         val_loss = 0.0
@@ -247,10 +273,13 @@ for epoch in range(num_epochs):
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             best_model_id = epoch+1
-            torch.save(model.state_dict(), f'models/best_model.pt')
+            torch.save(model.state_dict(), best_model_path)
         
         if epoch % 100 == 0:
-            torch.save(model.state_dict(), f'models/model_{epoch}.pt')
+            torch.save(
+                model.state_dict(),
+                os.path.join(model_dir, f"model_{epoch + 1}.pt")
+            )
 
         val_time = time.time() - val_time
         
@@ -265,7 +294,12 @@ for epoch in range(num_epochs):
 
 print('Training finished.')
 print(f"Training Time: {time.time() - t0:.1f}s")
-
+model.load_state_dict(
+    torch.load(
+        best_model_path,
+        map_location=device
+    )
+)
 # Testing loop
 model.eval()
 test_loss = 0.0

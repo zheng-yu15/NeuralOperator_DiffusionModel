@@ -1,1 +1,22 @@
 .DS_Store
+# Local VS Code settings
+.vscode/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Generated datasets and predictions
+*.npy
+
+# Saved parameters and model weights
+*.pkl
+*.pt
+*.pth
+
+# Generated simulation data
+case_1_kolmogorov/data/alpha_*/
+
+# Model folders
+**/models/
+**/models_reduced/

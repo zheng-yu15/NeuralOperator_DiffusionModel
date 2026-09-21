@@ -141,17 +141,23 @@ def combined_scheduler(optimizer, total_epochs, warmup_epochs, last_epoch=-1):
 #########################
 
 
-res=128
+#res=128
 print("Loading Dataset ...")
 debug = False
+data_path = (
+    r"E:\AI_Project\NeuralOperator_DiffusionModel"
+    r"\case_1_kolmogorov\data"
+    r"\alpha_1.5_tau_14_re_2007_N_50_T_10_nt_100_nx_64"
+    r"\traj.npy"
+)
 
-traj = np.load(f"/oscar/data/gk/voommen/no_diffusion/kolmogrov/data/alpha_1.5_tau_14_re_2007_N_1000_T_50_nt_200_nx_512/res_{res}/traj.npy") #[1000, nx, ny, nt]
+traj = np.load(data_path)
 traj = traj.transpose(0,3,1,2)
 traj = np.expand_dims(traj, axis=-1)
 
-traj_train = traj[:800, :80][:, ::2]
-traj_val   = traj[800:900, :80][:, ::2]
-traj_test  = traj[900:, :80][:, ::2]
+traj_train = traj[:40]
+traj_val   = traj[40:45]
+traj_test  = traj[45:50]
 
 print("Loaded Dataset")
 print("Dataset type: ", traj_train.dtype)
@@ -175,8 +181,8 @@ Par = {
        'nx'              : traj_train.shape[2],
        'ny'              : traj_train.shape[3],
        'nf'              : traj_train.shape[4],
-       'lb'              : 20,
-       'lf'              : 10,
+       'lb'              : 10,
+       'lf'              : 5,
        'subsample_t'     : 1
        }
 
@@ -206,12 +212,13 @@ Par.update(
 )
 
 
-if debug:
-    Par['num_epochs']  = 50 #500 #500
-else:
-    Par['num_epochs']  = 500 #4000
+#if debug:
+ #   Par['num_epochs']  = 50 #500 #500
+#else:
+#    Par['num_epochs']  = 500 #4000
 
-print('Par:\n', Par)
+#print('Par:\n', Par)
+Par["num_epochs"] = 120
 
 with open('Par.pkl', 'wb') as f:
     pickle.dump(Par, f)
@@ -235,9 +242,9 @@ val_dataset = YourDataset(x_val_tensor, y_val_tensor)
 test_dataset = YourDataset(x_test_tensor, y_test_tensor)
 
 # Define data loaders
-train_batch_size = 32
-val_batch_size   = x_val.shape[0]
-test_batch_size  = x_test.shape[0]
+train_batch_size = 2
+val_batch_size   = 1
+test_batch_size  = 1
 train_loader = DataLoader(train_dataset, batch_size=train_batch_size, shuffle=True)
 val_loader = DataLoader(val_dataset, batch_size=val_batch_size)
 test_loader = DataLoader(test_dataset, batch_size=test_batch_size)
@@ -267,7 +274,7 @@ num_epochs = Par['num_epochs']
 best_val_loss = float('inf')
 best_model_id = 0
 
-os.makedirs('models', exist_ok=True)
+os.makedirs("models_reduced", exist_ok=True)
 
 for epoch in range(num_epochs):
     begin_time = time.time()
@@ -312,7 +319,10 @@ for epoch in range(num_epochs):
     if val_loss < best_val_loss:
         best_val_loss = val_loss
         best_model_id = epoch+1
-        torch.save(model.state_dict(), f'models/best_model.pt')
+        torch.save(
+            model.state_dict(),
+            "models_reduced/best_model.pt"
+        )
     
     time_stamp = str('[')+datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")+str(']')
     elapsed_time = time.time() - begin_time
@@ -321,6 +331,12 @@ for epoch in range(num_epochs):
           )
 
 print('Training finished.')
+model.load_state_dict(
+    torch.load(
+        "models_reduced/best_model.pt",
+        map_location=device
+    )
+)
 
 # Testing loop
 model.eval()
